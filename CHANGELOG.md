@@ -6,6 +6,11 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- The digest a run reports, and the one a rollback returns to, are read from the
+  running CONTAINER rather than from the image tag. A tag is what a deploy moves,
+  so asking the tag what is running answers "what would start next" — which is
+  the new bytes, and taking it as the previous ones gave a rollback that rolled
+  forward. CI caught that on its first run.
 - `rollback`, off by default: a failed verification puts the previous digest back
   and checks the host answers again, and the workflow still fails — a rollback
   that turned a red run green would be the worst of both. It moves the local tag

@@ -116,11 +116,21 @@ check_connection() {
   fi
 }
 
-# What is running right now, by digest, before anything is pulled. This is the
-# only moment it can be read: after the pull, the tag names the new bytes.
-previous_digest() {
-  [[ -n "$INPUT_IMAGE" ]] || return 0
-  remote "docker image inspect --format '{{index .RepoDigests 0}}' $(printf '%q' "$INPUT_IMAGE")" 2>/dev/null || true
+# The id of the image the service's container is actually running.
+#
+# Read from the CONTAINER, never from the tag. A tag is what a deploy moves, so
+# `docker image inspect <reference>` answers "what would start next", which is
+# the new bytes even before anything restarts — and taking that as "what is
+# running now" gave a rollback that rolled forward.
+running_image_id() {
+  [[ -n "$INPUT_COMPOSE_FILE" ]] || return 0
+  local compose service=""
+  compose="docker compose -f $(printf '%q' "$INPUT_COMPOSE_FILE")"
+  [[ -n "$INPUT_SERVICE" ]] && service="$(printf '%q' "$INPUT_SERVICE")"
+  local container
+  container="$(remote "${compose} ps -q ${service} 2>/dev/null | head -1" 2>/dev/null || true)"
+  [[ -n "$container" ]] || return 0
+  remote "docker inspect --format '{{.Image}}' $(printf '%q' "$container")" 2>/dev/null || true
 }
 
 # ── The deploy itself ────────────────────────────────────────────────────────
@@ -143,13 +153,16 @@ deploy() {
   remote "${compose} pull -q ${service} && ${compose} up -d --remove-orphans ${service}"
 }
 
-# What is actually running, by digest, so the log records the bytes rather than
-# a tag that can move under it.
+# What is actually running, so the log records the bytes rather than a tag that
+# can move under it. The registry digest is the readable form and is preferred;
+# the local image id is the fallback, and is what the rollback moves back to.
 record_digest() {
-  local digest=""
+  local digest="" id
+  id="$(running_image_id)"
   if [[ -n "$INPUT_IMAGE" ]]; then
     digest="$(remote "docker image inspect --format '{{index .RepoDigests 0}}' $(printf '%q' "$INPUT_IMAGE")" 2>/dev/null || true)"
   fi
+  [[ -z "$digest" ]] && digest="$id"
   echo "digest=${digest}" >> "${GITHUB_OUTPUT:-/dev/null}"
   [[ -n "$digest" ]] && echo "→ running ${digest}"
   return 0
@@ -261,7 +274,7 @@ main() {
 
   local before=""
   if [[ "${INPUT_ROLLBACK,,}" == "true" ]]; then
-    before="$(previous_digest)"
+    before="$(running_image_id)"
     [[ -n "$before" ]] && echo "→ ${before} is running now, and is what a failed verification returns to"
   fi
 
