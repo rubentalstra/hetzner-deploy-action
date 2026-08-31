@@ -149,6 +149,22 @@ CI asserts both properties rather than claiming them — one job greps the
 action's own output for key material and fails if it finds any, and checks that
 no key directory survives a failed run.
 
+## Versioning
+
+`@v1` follows the latest v1.x and is what the examples above use. It is a trust
+relationship with this repository: nothing inside a major will break you on
+purpose, and the integration job is the contract that keeps it true.
+
+Pin a full commit SHA instead if you want bytes rather than a promise:
+
+```yaml
+- uses: rubentalstra/hetzner-deploy-action@<full 40-character sha> # v1.0.0
+```
+
+The release lane verifies the tagged commit, publishes the release, and moves
+`v1` **last**, so that pointer never names a commit whose release did not
+finish.
+
 ## Licence
 
 MIT.

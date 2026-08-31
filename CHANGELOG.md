@@ -5,6 +5,8 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-31
+
 ### Added
 - Deploy a container image to a host over SSH, then verify from the runner that
   the host serves what was deployed. `verify-url` without `verify-contains` is
@@ -22,3 +24,6 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
   would write the key to wherever the output went. CI asserts both halves — no
   key material at all without a runner, and none outside the registration with
   one.
+
+[unreleased]: https://github.com/rubentalstra/hetzner-deploy-action/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/rubentalstra/hetzner-deploy-action/releases/tag/v1.0.0

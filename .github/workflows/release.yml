@@ -1,0 +1,139 @@
+# A tag publishes the release, and the moving major tag moves LAST.
+#
+# `uses: owner/action@v1` is what other people's workflows resolve, so that
+# pointer must never name a commit whose release did not finish publishing. The
+# order here is the whole safety property: verify, release, then move v1.
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: An existing vX.Y.Z tag to publish.
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Nothing is published before the same gates a pull request passes have
+  # passed on the tagged commit itself.
+  verify:
+    name: the tagged commit passes its own gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      major: ${{ steps.plan.outputs.major }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      - id: plan
+        env:
+          REF_NAME: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${REF_NAME#v}"
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::${REF_NAME} is not a vX.Y.Z tag"; exit 1 ;;
+          esac
+          {
+            echo "version=${version}"
+            echo "major=v${version%%.*}"
+          } >> "$GITHUB_OUTPUT"
+      - name: The changelog has a section for this version
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          grep -qE "^## \[${VERSION}\]" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no '## [${VERSION}]' heading — a release with no notes is a release nobody can read"; exit 1; }
+      - name: shellcheck
+        run: shellcheck deploy.sh
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+      - name: The action metadata is what the Marketplace requires
+        run: |
+          set -euo pipefail
+          for key in name description runs; do
+            grep -qE "^${key}:" action.yml \
+              || { echo "::error::action.yml has no top-level '${key}', which the Marketplace requires"; exit 1; }
+          done
+          grep -qE '^\s+icon:' action.yml || { echo "::error::branding.icon is missing"; exit 1; }
+          grep -qE '^\s+color: (white|black|yellow|blue|green|orange|red|purple|gray-dark)$' action.yml \
+            || { echo "::error::branding.color must be one of the nine colours the metadata reference allows"; exit 1; }
+
+  publish:
+    name: publish the release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Notes from the changelog section
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v v="## [${VERSION}]" '
+            index($0, v) == 1 { inside = 1; next }
+            inside && /^## \[/ { exit }
+            inside { print }
+          ' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "::error::the changelog section for ${VERSION} is empty"; exit 1; }
+          cat notes.md
+      - name: Create it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" --title "$VERSION" --notes-file notes.md --verify-tag
+
+  # LAST, and only after the release above exists. Anyone on `@v1` gets this
+  # commit the moment this step lands, so nothing may follow it.
+  move-major:
+    name: move the major tag
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Point the major tag at this commit
+        env:
+          MAJOR: ${{ needs.verify.outputs.major }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "$MAJOR" -m "${VERSION}"
+          # The leading `+` is the force in a refspec, which is the only thing
+          # a moving major tag can be updated with.
+          git push origin "+refs/tags/${MAJOR}"
+          echo "${MAJOR} now points at $(git rev-parse HEAD) (${VERSION})"
