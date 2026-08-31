@@ -1,0 +1,85 @@
+#cloud-config
+# A fresh box to the state this action expects, on first boot.
+#
+# Committed rather than remembered: a host built by hand is a host nobody can
+# rebuild, and the first time you need to rebuild it is the worst time to find
+# that out. Pass it as the server's user data at creation.
+#
+# Replace: the SSH public keys, the domain in the Caddyfile, and the image.
+
+users:
+  - name: deploy
+    # No password, ever. The only way in is a key.
+    lock_passwd: true
+    shell: /bin/bash
+    groups: [docker]
+    sudo: []
+    ssh_authorized_keys:
+      # YOUR key, for logging in as a person.
+      - ssh-ed25519 AAAA... you@laptop
+      # The CI deploy key, restricted to ONE command. A key that leaks then runs
+      # one script instead of a shell, which is the difference between an
+      # inconvenience and an incident.
+      - command="/opt/app/deploy.sh",no-agent-forwarding,no-port-forwarding,no-user-rc,no-pty ssh-ed25519 AAAA... deploy@ci
+
+# Key-only SSH, no root login. cloud-init writes this before sshd restarts.
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  # A box nobody logs into still has to take security updates.
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+  # Docker's own logs are the most likely thing to fill a small disk, and a full
+  # disk fails in a way that looks like nothing at all.
+  - path: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" },
+        "live-restore": true
+      }
+
+  # The one command the CI key may run. Everything the deploy needs to do lives
+  # here, so the restriction above is meaningful.
+  - path: /opt/app/deploy.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # The restricted command the deploy key runs. SSH puts the client's
+      # requested command in SSH_ORIGINAL_COMMAND; this script ignores it and
+      # does one thing, which is the point of the restriction.
+      set -euo pipefail
+      cd /opt/app
+      docker compose pull -q
+      docker compose up -d --remove-orphans
+      docker image prune -f --filter "until=168h"
+
+runcmd:
+  # Two firewalls that agree. The Hetzner Cloud Firewall is the one that keeps
+  # traffic off the NIC; this one is what the box itself says, and a difference
+  # between them is a question worth answering.
+  - [ufw, default, deny, incoming]
+  - [ufw, default, allow, outgoing]
+  - [ufw, allow, "22/tcp"]
+  - [ufw, allow, "80/tcp"]
+  - [ufw, allow, "443/tcp"]
+  - [ufw, --force, enable]
+  # Docker from its own repository rather than the distribution's older build.
+  - [sh, -c, "curl -fsSL https://get.docker.com | sh"]
+  - [systemctl, enable, --now, docker]
+  - [install, -d, -o, deploy, -g, deploy, /opt/app]
+  - [systemctl, enable, --now, unattended-upgrades]
+
+final_message: "the box is up after $UPTIME seconds; put docker-compose.yml and the Caddyfile in /opt/app"

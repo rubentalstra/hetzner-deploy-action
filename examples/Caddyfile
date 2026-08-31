@@ -1,0 +1,25 @@
+# Automatic HTTPS, which is the one piece that is worse when hand-rolled.
+#
+# Caddy asks for a certificate the first time the name resolves to this box and
+# renews it on its own. Nothing in CI touches a certificate, and nothing expires
+# quietly at 3am.
+
+app.example.com {
+	reverse_proxy app:3000
+
+	encode zstd gzip
+
+	# The proxy is the only thing on the public port, so the security headers
+	# belong here rather than in every application that sits behind it.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

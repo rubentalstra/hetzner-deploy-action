@@ -91,8 +91,12 @@ your account. The actions that combine both are solving a different problem.
 
 ## Setting up the host
 
-The action assumes a host that already has Docker and a compose file. What it
-needs from you, once:
+`examples/` carries a cloud-init file, a compose file and a Caddyfile that bring
+a fresh box to the state this action expects, each with the reasoning next to the
+decision. They are read, not run: this action deploys to a host and does not
+build one, because an action that does both is one nobody should hand a key to.
+
+The short version of what it needs from you, once:
 
 ```bash
 # On the host, a user that can run docker and nothing else interesting.
@@ -135,8 +139,10 @@ directory with it.
 - It does not create servers, resize them, or touch your cloud account.
 - It does not do rolling updates across several hosts behind a load balancer.
   If that is your shape, you want something else.
-- It does not manage TLS. Put a reverse proxy on the host — Caddy gets a
-  certificate on its own — and point this at the public URL.
+- It does not manage TLS. Put a reverse proxy on the host — `examples/Caddyfile`
+  gets a certificate on its own — and point this at the public URL.
+- It does not build or provision hosts. `examples/cloud-init.yaml` is a starting
+  point you apply yourself.
 
 ## Security
 

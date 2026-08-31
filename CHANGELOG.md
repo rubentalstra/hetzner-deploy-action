@@ -5,6 +5,12 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- `examples/` — a cloud-init file, a compose file and a Caddyfile that bring a
+  fresh box to the state the action expects, with the reasoning next to each
+  decision, plus how to test that the restricted deploy key is actually
+  restricted.
+
 ## [1.0.0] - 2026-08-31
 
 ### Added

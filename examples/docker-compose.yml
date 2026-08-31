@@ -1,0 +1,56 @@
+# One service behind a reverse proxy that gets its own certificate.
+#
+# Three things here exist because of a failure each prevents, and they are the
+# three most commonly left out.
+
+services:
+  app:
+    image: ghcr.io/example/app:latest
+    container_name: app
+    # A crash comes back. Without this, the first OOM is permanent downtime.
+    restart: unless-stopped
+    # Something other than the process table gets an opinion on whether it is
+    # serving. The action waits on this before it verifies anything.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/app", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # One runaway process cannot take the host with it. Size this to what the
+    # box has, leaving room for the proxy and the operating system.
+    deploy:
+      resources:
+        limits:
+          memory: 6g
+    # Logs are capped in /etc/docker/daemon.json; repeated here so a compose
+    # file read on its own says what it does.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    env_file:
+      - .env
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificate and the account key survive a redeploy. Losing them
+      # means asking a certificate authority for a new certificate every time,
+      # which is how a deploy loop meets a rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
