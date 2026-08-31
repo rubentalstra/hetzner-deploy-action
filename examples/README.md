@@ -11,12 +11,27 @@ next to each decision.
 | `docker-compose.yml` | One service behind Caddy, with the three things most often left out: a restart policy, a healthcheck the action can wait on, and a memory limit |
 | `Caddyfile` | Automatic TLS, so no certificate is ever renewed by hand or by CI |
 
-## The restricted key, and why it matters
+## The restricted key, and what it costs
 
 The CI key's entry in `authorized_keys` is prefixed
 `command="/opt/app/deploy.sh"`. SSH then runs that script whatever the client
 asked for, so the key cannot open a shell, read a file, or start a container of
-its own choosing. Test it rather than trusting it:
+its own choosing.
+
+**It only works with `remote-command`.** The action's compose path issues
+several commands — pull, compose pull, compose up, an inspect for the digest and
+the health — and a restricted key runs the script once for each of them. So pick
+one shape:
+
+| | Key | What you get |
+|---|---|---|
+| `remote-command: deploy` | restricted to one script | The tightest key. No digest output, no health wait — neither can run |
+| `compose-file: …` | ordinary key, docker group, no sudo | The digest, the health wait, and the connection diagnosis |
+
+Neither is wrong. The restricted key is the right default for a box you care
+about; the compose path is the right default for one you are still setting up.
+
+Test the restriction rather than trusting it:
 
 ```bash
 ssh -i deploy-key deploy@app.example.com 'echo this should not run'

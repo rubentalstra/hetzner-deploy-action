@@ -6,6 +6,12 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- A connection probe on the compose path that names which failure it was: a
+  changed host key, a refused key, nothing answering, a refused port, a name
+  that does not resolve, or a user who got in and cannot talk to docker. Five
+  of those six were previously one red run and a guess. Skipped when
+  `remote-command` is set, because a `command="…"`-restricted key runs its
+  script for whatever you ask — so on that setup a probe would be a deploy.
 - `examples/` — a cloud-init file, a compose file and a Caddyfile that bring a
   fresh box to the state the action expects, with the reasoning next to each
   decision, plus how to test that the restricted deploy key is actually

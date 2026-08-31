@@ -78,6 +78,44 @@ remote() {
     "$@"
 }
 
+# Four failures look nearly identical in a workflow log and have completely
+# different fixes, and the person least able to tell them apart is the one
+# setting this up for the first time. So the connection is probed once, before
+# anything is deployed, and the answer names which of the four it was.
+#
+# ONLY on the compose path. A key restricted with command="…" runs its script
+# for whatever you ask, so on that setup a probe IS a deploy — which is why the
+# restriction belongs with `remote-command`, where the action issues exactly one
+# command and that command is the deploy.
+check_connection() {
+  local out rc
+  out="$(remote true 2>&1)" && rc=0 || rc=$?
+  if (( rc == 0 )); then
+    echo "→ ${INPUT_USER}@${INPUT_HOST}:${INPUT_PORT} accepts the key"
+  else
+    case "$out" in
+      *"REMOTE HOST IDENTIFICATION HAS CHANGED"*|*"Host key verification failed"*)
+        fail "the host key at ${INPUT_HOST}:${INPUT_PORT} is not the one pinned in known-hosts. Either the host was rebuilt — re-pin it with 'ssh-keyscan -p ${INPUT_PORT} ${INPUT_HOST}' — or something else is answering for that address, which is worth looking into before you deploy anything." ;;
+      *"Permission denied"*|*"Too many authentication failures"*)
+        fail "${INPUT_HOST} refused the key for user '${INPUT_USER}'. The public half has to be in that user's authorized_keys, and the user has to exist. If you restricted the key with command=\"…\", check the script path in that entry." ;;
+      *"Connection timed out"*|*"Operation timed out"*|*"No route to host"*|*"Network is unreachable"*)
+        fail "nothing answered at ${INPUT_HOST}:${INPUT_PORT} within 15s. Check the address, the port, and both firewalls — the cloud one and the host's own." ;;
+      *"Connection refused"*)
+        fail "${INPUT_HOST} refused the connection on port ${INPUT_PORT}: something is reachable there and sshd is not listening on that port." ;;
+      *"Name or service not known"*|*"nodename nor servname"*|*"could not resolve"*|*"Could not resolve"*)
+        fail "${INPUT_HOST} does not resolve. If the DNS record is new, it may not have propagated yet." ;;
+      *)
+        fail "could not reach ${INPUT_USER}@${INPUT_HOST}:${INPUT_PORT} (ssh exit ${rc}): ${out}" ;;
+    esac
+  fi
+
+  # Reached the host and cannot use docker is its own failure, and it is the one
+  # people hit after following a setup guide that forgot the docker group.
+  if ! remote "docker version --format '{{.Server.Version}}'" > /dev/null 2>&1; then
+    fail "'${INPUT_USER}' logged into ${INPUT_HOST} and cannot talk to docker. Add the user to the docker group ('usermod -aG docker ${INPUT_USER}'); the group takes effect on the next login."
+  fi
+}
+
 # ── The deploy itself ────────────────────────────────────────────────────────
 deploy() {
   if [[ -n "$INPUT_REMOTE_COMMAND" ]]; then
@@ -169,6 +207,7 @@ main() {
   fi
 
   prepare_ssh
+  [[ -z "$INPUT_REMOTE_COMMAND" ]] && check_connection
   deploy
   record_digest
   wait_healthy

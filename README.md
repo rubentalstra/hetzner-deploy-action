@@ -20,6 +20,34 @@ Written for a Hetzner box, and it works on any host with SSH and Docker.
     verify-contains: "1.2.3"
 ```
 
+## Two shapes, and which key each one needs
+
+**The compose path**, above: the action issues several commands on the host —
+pull, compose pull, compose up, an inspect for the digest and the health. The
+deploy key needs a shell for that, so keep the user narrow (docker group, no
+sudo) and let the key be an ordinary one.
+
+**One restricted command**, when you want the key to be able to do exactly one
+thing:
+
+```yaml
+- uses: rubentalstra/hetzner-deploy-action@v1
+  with:
+    host: console.example.com
+    ssh-key: ${{ secrets.DEPLOY_SSH_KEY }}
+    known-hosts: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+    remote-command: deploy
+    verify-url: https://console.example.com/
+    verify-contains: "1.2.3"
+```
+
+with `command="/opt/console/deploy.sh"` in `authorized_keys`. SSH then runs that
+script whatever the client asked for, so the key cannot open a shell — and the
+action issues exactly one command, which is the deploy. **These two do not mix:
+a restricted key on the compose path runs the script once per command**, which
+is why the action skips its connection probe whenever `remote-command` is set.
+The tighter key costs you the digest and health checks, since neither can run.
+
 ## Why another deploy action
 
 Three things this one refuses to do, because each of them is how a deploy
@@ -51,13 +79,17 @@ your account. The actions that combine both are solving a different problem.
 1. Writes the key to a file only this step can read, and removes it when the
    step ends — including on every failure path.
 2. Verifies the host key against `known-hosts`, unless you turned that off.
-3. Pulls the image on the host, then `docker compose pull` and `up -d`. Or runs
+3. On the compose path, probes the connection once and names which of five
+   things failed if it cannot get in: a changed host key, a refused key, nothing
+   answering, a refused port, a name that does not resolve — or a user who got
+   in and cannot talk to docker. Skipped when `remote-command` is set.
+4. Pulls the image on the host, then `docker compose pull` and `up -d`. Or runs
    `remote-command` instead, if your deploy is not compose-shaped.
-4. Records the digest that is now running, so the log names the bytes rather
+5. Records the digest that is now running, so the log names the bytes rather
    than a tag that can move under it.
-5. Waits for the container's own `HEALTHCHECK`, if you named one.
-6. Fetches `verify-url` until it serves `verify-contains`, or fails with which
-   of those five steps failed and what to read next.
+6. Waits for the container's own `HEALTHCHECK`, if you named one.
+7. Fetches `verify-url` until it serves `verify-contains`, or fails with which
+   of those seven steps failed and what to read next.
 
 ## Inputs
 
