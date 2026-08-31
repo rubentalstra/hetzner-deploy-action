@@ -1,0 +1,7 @@
+# Workflow and action changes need the owner's review. The security-hardening
+# reference recommends exactly this: a CODEOWNERS entry is what stops a workflow
+# file being changed without someone looking at it.
+*                   @rubentalstra
+/.github/workflows/ @rubentalstra
+/action.yml         @rubentalstra
+/deploy.sh          @rubentalstra

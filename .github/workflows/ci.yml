@@ -143,6 +143,46 @@ jobs:
 
           echo "all three refusals held"
 
+      # The security-hardening reference asks for exactly this audit: run the
+      # thing with valid and invalid input and check the output for the secret.
+      # Masking is the runner's job and it only redacts what it was told about;
+      # this asserts the script never had to rely on it.
+      - name: The key never reaches the output
+        env:
+          KEY: ${{ steps.host.outputs.key }}
+          KNOWN: ${{ steps.host.outputs.known }}
+        run: |
+          set -euo pipefail
+          # One line of the key body, which is neither the armour nor a header,
+          # so a match means real key material and not a boilerplate line.
+          needle="$(printf '%s\n' "$KEY" | sed -n '3p')"
+          [ -n "$needle" ] || { echo "::error::could not take a sample line from the key"; exit 1; }
+
+          captured="$RUNNER_TEMP/captured.log"
+          set +e
+          env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+              INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$KNOWN" INPUT_INSECURE=false \
+              INPUT_IMAGE=nginx:1.29-alpine \
+              INPUT_COMPOSE_FILE=/opt/fixture/docker-compose.yml INPUT_SERVICE=fixture \
+              INPUT_REMOTE_COMMAND="" INPUT_WAIT_HEALTHY=fixture INPUT_HEALTH_TIMEOUT=30 \
+              INPUT_VERIFY_URL=http://127.0.0.1:18080/ INPUT_VERIFY_CONTAINS="version 9.9.9" \
+              INPUT_VERIFY_TIMEOUT=10 INPUT_VERIFY_INTERVAL=3 \
+              GITHUB_OUTPUT=/dev/null \
+              ./deploy.sh > "$captured" 2>&1
+          set -e
+
+          if grep -qF -- "$needle" "$captured"; then
+            echo "::error::the action printed key material"
+            exit 1
+          fi
+          # And a failing run must still leave nothing behind.
+          if find "${RUNNER_TEMP}" -maxdepth 1 -name 'hetzner-deploy-*' | grep -q .; then
+            echo "::error::a key directory survived the run"
+            find "${RUNNER_TEMP}" -maxdepth 1 -name 'hetzner-deploy-*' -ls
+            exit 1
+          fi
+          echo "no key material in the output, and no key directory left behind"
+
   conclusion:
     name: conclusion
     needs: [lint, deploy]

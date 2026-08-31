@@ -19,7 +19,7 @@ cleanup() {
     rmdir "$SSH_DIR" 2>/dev/null || true
   fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 fail() {
   echo "::error::$*" >&2
@@ -33,6 +33,13 @@ require() {
 
 # ── The credentials, on disk for the length of this step and no longer ───────
 prepare_ssh() {
+  # A secret is redacted only if the runner was told about it. The key usually
+  # arrives from `secrets.*` and is masked already; it does not have to, so it
+  # is registered here, line by line, because the runner masks exact strings.
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && echo "::add-mask::$line"
+  done <<< "$INPUT_SSH_KEY"
+
   mkdir -p "$SSH_DIR"
   chmod 700 "$SSH_DIR"
   printf '%s\n' "$INPUT_SSH_KEY" > "$KEY_FILE"
@@ -142,6 +149,9 @@ verify() {
 }
 
 main() {
+  case "${RUNNER_OS:-Linux}" in
+    Windows) fail "this action needs bash, ssh and curl, so it runs on the Linux and macOS runners. On a Windows runner, deploy from a container step or use a Linux job." ;;
+  esac
   require host "$INPUT_HOST"
   require ssh-key "$INPUT_SSH_KEY"
   if [[ -z "$INPUT_REMOTE_COMMAND" && -z "$INPUT_COMPOSE_FILE" ]]; then

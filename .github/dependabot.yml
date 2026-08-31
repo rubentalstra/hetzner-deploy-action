@@ -1,0 +1,15 @@
+# The actions this repository's own CI consumes are pinned to full commit SHAs,
+# which is what the security-hardening reference calls "the only way to use an
+# action as an immutable release" — and which also means Dependabot ALERTS
+# cannot fire for them, since those key off semantic versions. So Dependabot is
+# here to open the version bumps, and the pin stays a SHA with its version in a
+# trailing comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

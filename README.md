@@ -119,6 +119,17 @@ ssh-keyscan -p 22 console.example.com | gh secret set DEPLOY_KNOWN_HOSTS
 Put the public half in `authorized_keys` above, and delete your local copy of
 the private half.
 
+## Runners
+
+Linux and macOS. The action is bash, `ssh` and `curl`; on a Windows runner it
+refuses at the first step with that sentence rather than failing somewhere deep.
+
+Composite actions cannot declare a post step
+([metadata syntax](https://docs.github.com/en/actions/reference/metadata-syntax-for-github-actions)),
+so the key is removed by a `trap` on `EXIT INT TERM` inside the step. A
+cancelled job still cleans up; a runner destroyed mid-step takes the temporary
+directory with it.
+
 ## What it does not do
 
 - It does not create servers, resize them, or touch your cloud account.
@@ -126,6 +137,17 @@ the private half.
   If that is your shape, you want something else.
 - It does not manage TLS. Put a reverse proxy on the host — Caddy gets a
   certificate on its own — and point this at the public URL.
+
+## Security
+
+`SECURITY.md` states what the action is trusted with and what it does with the
+key. The short version: an SSH key and no cloud API token, the key masked with
+the runner's own redaction and removed on every exit path, and host key pinning
+required rather than suggested.
+
+CI asserts both properties rather than claiming them — one job greps the
+action's own output for key material and fails if it finds any, and checks that
+no key directory survives a failed run.
 
 ## Licence
 

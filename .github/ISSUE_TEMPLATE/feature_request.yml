@@ -1,0 +1,23 @@
+name: A capability it should have
+description: Something the action cannot do that it should.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What you are trying to do, and where this action stops you
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it would look like
+      description: The inputs or behaviour you have in mind. A sketch is fine.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you are doing instead today
+    validations:
+      required: false
