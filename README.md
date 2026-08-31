@@ -221,6 +221,12 @@ The release lane verifies the tagged commit, publishes the release, and moves
 `v1` **last**, so that pointer never names a commit whose release did not
 finish.
 
+## Audit
+
+`docs/audit.md` records which GitHub Actions reference pages this repository was
+read against, when, and what each one changed. The next pass is a diff rather
+than a re-read.
+
 ## Licence
 
 MIT.
