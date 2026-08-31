@@ -5,6 +5,22 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-08-31
+
+### Fixed
+- The action's description is under the 125 characters the Marketplace requires,
+  so the listing can be published. The long version is the README's first
+  paragraph, which is where it belonged.
+
+### Changed
+- `tests/metadata.sh` is the metadata gate, and it runs on every pull request as
+  well as at release. The first version checked three keys and a colour by grep
+  and the publish UI still refused the listing — for a length a grep cannot
+  measure. It now reads `action.yml` through a parser and checks the description
+  length, the name, the colour against the nine allowed values, the icon against
+  the thirteen unavailable ones, and that every input and output carries a
+  description and every output a value expression.
+
 ## [1.0.0] - 2026-08-31
 
 ### Added
@@ -41,5 +57,6 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - An integration job that deploys to a real SSH host and then drives three
   refusals, failing if any of them passes.
 
-[unreleased]: https://github.com/rubentalstra/hetzner-deploy-action/compare/v1.0.0...HEAD
+[unreleased]: https://github.com/rubentalstra/hetzner-deploy-action/compare/v1.0.1...HEAD
 [1.0.0]: https://github.com/rubentalstra/hetzner-deploy-action/releases/tag/v1.0.0
+[1.0.1]: https://github.com/rubentalstra/hetzner-deploy-action/releases/tag/v1.0.1

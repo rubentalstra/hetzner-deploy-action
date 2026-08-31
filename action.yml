@@ -1,7 +1,7 @@
 name: Hetzner deploy and verify
-description: >-
-  Deploy a container image to a host you already own, over SSH, and refuse to
-  go green until that host actually serves what you deployed.
+# Under 125 characters, which the Marketplace requires and the release lane
+# checks. The long version is the README's first paragraph.
+description: Deploy a container to a host you own over SSH, and fail unless that host actually serves what you deployed.
 author: Ruben Talstra
 branding:
   icon: upload-cloud

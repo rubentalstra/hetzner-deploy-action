@@ -33,6 +33,10 @@ jobs:
           docker run --rm -v "$PWD:/repo" --workdir /repo \
             rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
             -color
+      # What the Marketplace requires, checked on every pull request rather than
+      # discovered at the publish click.
+      - name: action.yml is publishable
+        run: bash tests/metadata.sh
 
   deploy:
     name: it actually deploys and verifies

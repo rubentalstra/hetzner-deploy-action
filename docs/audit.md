@@ -50,6 +50,24 @@ next pass is a diff rather than a re-read.
 - A public repository with exactly one root metadata file, and no review by
   GitHub.
 
+## 2026-08-31 — second pass, from the publish UI's own refusal
+
+The Marketplace publish form refused the listing and named one rule the audit
+had missed: **a description must be under 125 characters.** Neither reference
+page states it; the form does. Two things changed.
+
+The description is now 107 characters, and the long version lives in the README
+where it belonged. And the metadata gate stopped being a grep: `tests/metadata.sh`
+reads `action.yml` through a parser and checks the description length, the name,
+the colour, the icon against the thirteen unavailable ones, and that every input
+and output carries a description and every output a value expression. It runs on
+every pull request as well as at release, and it has a seeded-violation proof.
+
+The lesson worth keeping: a gate written from documentation catches what the
+documentation says. The publish form is the authority on what it accepts, and the
+only way to learn its rules is to be refused by it — so each refusal becomes a
+check rather than a memory.
+
 ## What is still unread
 
 The reusable-workflows and JavaScript-action references, which do not apply to a

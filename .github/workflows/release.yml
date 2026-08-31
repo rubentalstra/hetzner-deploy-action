@@ -66,16 +66,11 @@ jobs:
           docker run --rm -v "$PWD:/repo" --workdir /repo \
             rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
             -color
+      # The same gate a pull request passes. The first version of this checked
+      # three keys and a colour by grep, and the publish UI still refused the
+      # listing — for the description length, which a grep cannot measure.
       - name: The action metadata is what the Marketplace requires
-        run: |
-          set -euo pipefail
-          for key in name description runs; do
-            grep -qE "^${key}:" action.yml \
-              || { echo "::error::action.yml has no top-level '${key}', which the Marketplace requires"; exit 1; }
-          done
-          grep -qE '^\s+icon:' action.yml || { echo "::error::branding.icon is missing"; exit 1; }
-          grep -qE '^\s+color: (white|black|yellow|blue|green|orange|red|purple|gray-dark)$' action.yml \
-            || { echo "::error::branding.color must be one of the nine colours the metadata reference allows"; exit 1; }
+        run: bash tests/metadata.sh
 
   publish:
     name: publish the release
