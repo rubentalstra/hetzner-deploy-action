@@ -234,10 +234,9 @@ roll_back() {
       return 1 ;;
   esac
   echo "→ rolling back to ${previous}"
-  if ! remote "docker pull -q $(printf '%q' "$previous")"; then
-    echo "::error::the rollback could not pull ${previous}; the host is still serving the failed deploy"
-    return 1
-  fi
+  # Nothing is pulled. The previous image is local by definition — a container
+  # was running it, and a running container's image is never pruned — and a
+  # local image id is not something a registry can be asked for anyway.
   # The compose file names a REFERENCE, and what a deploy changed is which bytes
   # that reference resolves to. So the rollback moves the local tag back to the
   # previous digest and recreates, which needs no convention in the compose file
