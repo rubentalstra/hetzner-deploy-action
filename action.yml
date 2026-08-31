@@ -81,6 +81,15 @@ inputs:
     description: How long to wait between attempts, in seconds.
     required: false
     default: "5"
+  rollback:
+    description: >-
+      On a failed verification, put back the digest that was running before the
+      deploy and verify that. Off by default: an operator who sees the red run
+      often wants to look at the broken thing rather than have it swept away,
+      and that should be a choice rather than a default nobody made. The
+      workflow still fails either way.
+    required: false
+    default: "false"
   wait-healthy:
     description: >-
       A container name to wait on until Docker reports it healthy, before the
@@ -99,6 +108,12 @@ outputs:
   verified:
     description: Whether the verification ran and passed.
     value: ${{ steps.deploy.outputs.verified }}
+  rolled-back:
+    description: >-
+      Whether a failed verification put the previous digest back. `false` when
+      rollback is off, when the verification passed, or when there was nothing
+      to roll back to.
+    value: ${{ steps.deploy.outputs.rolled-back }}
 
 runs:
   using: composite
@@ -120,6 +135,7 @@ runs:
         INPUT_VERIFY_CONTAINS: ${{ inputs.verify-contains }}
         INPUT_VERIFY_TIMEOUT: ${{ inputs.verify-timeout }}
         INPUT_VERIFY_INTERVAL: ${{ inputs.verify-interval }}
+        INPUT_ROLLBACK: ${{ inputs.rollback }}
         INPUT_WAIT_HEALTHY: ${{ inputs.wait-healthy }}
         INPUT_HEALTH_TIMEOUT: ${{ inputs.health-timeout }}
       run: ${GITHUB_ACTION_PATH}/deploy.sh

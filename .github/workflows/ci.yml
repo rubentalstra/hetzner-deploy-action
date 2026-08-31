@@ -204,9 +204,114 @@ jobs:
           fi
           echo "no key material in the output, none outside the mask registration, and no key directory left behind"
 
+  # Rollback is only worth having if it has been watched working, so this drives
+  # a real moving tag: a local registry, two different images behind one
+  # reference, and a deploy that cannot verify.
+  rollback:
+    name: a failed verification puts the previous version back
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: An SSH host, and a registry whose tag can move
+        id: host
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server >/dev/null
+          sudo systemctl start ssh
+          ssh-keygen -t ed25519 -f "$RUNNER_TEMP/key" -N "" -C ci@test
+          mkdir -p ~/.ssh
+          cat "$RUNNER_TEMP/key.pub" >> ~/.ssh/authorized_keys
+          chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
+          docker run -d --restart always -p 5000:5000 --name registry registry:3
+          {
+            echo 'key<<KEY_EOF'; cat "$RUNNER_TEMP/key"; echo 'KEY_EOF'
+            echo 'known<<KNOWN_EOF'; ssh-keyscan -p 22 127.0.0.1; echo 'KNOWN_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish version one behind the moving tag, and deploy it
+        id: first
+        run: |
+          set -euo pipefail
+          # nginx serves a page saying nginx; httpd serves one saying "It works!".
+          # Two genuinely different images behind ONE reference is what a deploy
+          # actually is, and what a rollback has to undo.
+          docker pull -q nginx:1.29-alpine
+          docker tag nginx:1.29-alpine localhost:5000/fixture:current
+          docker push -q localhost:5000/fixture:current
+          mkdir -p /opt/rollback
+          cat > /opt/rollback/docker-compose.yml <<'YML'
+          services:
+            fixture:
+              image: localhost:5000/fixture:current
+              container_name: rollback-fixture
+              ports: ["18081:80"]
+              restart: unless-stopped
+          YML
+
+      - uses: ./
+        with:
+          host: 127.0.0.1
+          user: runner
+          ssh-key: ${{ steps.host.outputs.key }}
+          known-hosts: ${{ steps.host.outputs.known }}
+          image: localhost:5000/fixture:current
+          compose-file: /opt/rollback/docker-compose.yml
+          service: fixture
+          verify-url: http://127.0.0.1:18081/
+          verify-contains: "nginx"
+          verify-timeout: "90"
+
+      - name: Move the tag to something else, then deploy what cannot verify
+        id: second
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          docker pull -q httpd:2.4-alpine
+          docker tag httpd:2.4-alpine localhost:5000/fixture:current
+          docker push -q localhost:5000/fixture:current
+          # The action is invoked directly so the step can fail and be asserted
+          # on: `uses:` with continue-on-error would hide which half failed.
+          set +e
+          env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+              INPUT_SSH_KEY="${{ steps.host.outputs.key }}" \
+              INPUT_KNOWN_HOSTS="${{ steps.host.outputs.known }}" \
+              INPUT_INSECURE=false \
+              INPUT_IMAGE=localhost:5000/fixture:current \
+              INPUT_COMPOSE_FILE=/opt/rollback/docker-compose.yml INPUT_SERVICE=fixture \
+              INPUT_REMOTE_COMMAND="" INPUT_WAIT_HEALTHY="" INPUT_HEALTH_TIMEOUT=30 \
+              INPUT_ROLLBACK=true \
+              INPUT_VERIFY_URL=http://127.0.0.1:18081/ \
+              INPUT_VERIFY_CONTAINS="this version does not exist" \
+              INPUT_VERIFY_TIMEOUT=20 INPUT_VERIFY_INTERVAL=4 \
+              GITHUB_OUTPUT="$RUNNER_TEMP/rollback-output" \
+              ./deploy.sh
+          rc=$?
+          set -e
+          [ "$rc" -ne 0 ] || { echo "::error::the action passed on a verification that cannot succeed"; exit 1; }
+          echo "the action failed, as it must"
+
+      - name: The host is serving version one again
+        run: |
+          set -euo pipefail
+          served="$(curl -sS -m 15 http://127.0.0.1:18081/ || true)"
+          case "$served" in
+            *nginx*) echo "rolled back: the host serves version one again" ;;
+            *"It works"*) echo "::error::the host is still serving the failed deploy"; exit 1 ;;
+            *) echo "::error::the host serves neither version: ${served:0:120}"; exit 1 ;;
+          esac
+          grep -q '^rolled-back=true$' "$RUNNER_TEMP/rollback-output" \
+            || { echo "::error::the action did not report rolled-back=true"; cat "$RUNNER_TEMP/rollback-output"; exit 1; }
+
   conclusion:
     name: conclusion
-    needs: [lint, deploy]
+    needs: [lint, deploy, rollback]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

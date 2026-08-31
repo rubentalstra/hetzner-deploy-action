@@ -111,6 +111,7 @@ your account. The actions that combine both are solving a different problem.
 | `verify-interval` | | `5` | Seconds between attempts |
 | `wait-healthy` | | | A container to wait on until Docker reports it healthy |
 | `health-timeout` | | `120` | Seconds to wait for that |
+| `rollback` | | `false` | On a failed verification, put the previous digest back |
 
 \* unless `insecure-accept-any-host-key` is true.
 
@@ -120,6 +121,7 @@ your account. The actions that combine both are solving a different problem.
 |---|---|
 | `digest` | The image digest running on the host after the deploy |
 | `verified` | Whether the verification ran and passed |
+| `rolled-back` | Whether a failed verification put the previous digest back |
 
 ## Setting up the host
 
@@ -154,6 +156,22 @@ ssh-keyscan -p 22 console.example.com | gh secret set DEPLOY_KNOWN_HOSTS
 
 Put the public half in `authorized_keys` above, and delete your local copy of
 the private half.
+
+## Rollback
+
+Off by default. With `rollback: true`, a failed verification puts back the digest
+that was running before the deploy and checks the host answers again. **The
+workflow still fails** — a rollback that turned a red run green would be the
+worst of both.
+
+It works by moving the local tag back to the previous digest and recreating the
+container, so nothing in your compose file has to know about it and CI never
+edits a file on your host. Two cases it cannot help with, and it says so rather
+than pretending: an image given as a digest has no tag to move, and a first
+deploy has nothing to roll back to.
+
+Leaving it off is a real choice, not laziness: an operator who sees the red run
+often wants to look at the broken container rather than have it swept away.
 
 ## Runners
 

@@ -116,6 +116,13 @@ check_connection() {
   fi
 }
 
+# What is running right now, by digest, before anything is pulled. This is the
+# only moment it can be read: after the pull, the tag names the new bytes.
+previous_digest() {
+  [[ -n "$INPUT_IMAGE" ]] || return 0
+  remote "docker image inspect --format '{{index .RepoDigests 0}}' $(printf '%q' "$INPUT_IMAGE")" 2>/dev/null || true
+}
+
 # ── The deploy itself ────────────────────────────────────────────────────────
 deploy() {
   if [[ -n "$INPUT_REMOTE_COMMAND" ]]; then
@@ -157,11 +164,14 @@ wait_healthy() {
     state="$(remote "docker inspect --format '{{.State.Health.Status}}' $(printf '%q' "$INPUT_WAIT_HEALTHY")" 2>/dev/null || echo unknown)"
     case "$state" in
       healthy) echo "→ ${INPUT_WAIT_HEALTHY} is healthy"; return 0 ;;
-      unhealthy) fail "${INPUT_WAIT_HEALTHY} reports unhealthy: the deploy landed and the container refuses to serve" ;;
+      unhealthy)
+        echo "::error::${INPUT_WAIT_HEALTHY} reports unhealthy: the deploy landed and the container refuses to serve" >&2
+        return 1 ;;
     esac
     sleep "$INPUT_VERIFY_INTERVAL"
   done
-  fail "${INPUT_WAIT_HEALTHY} never reported healthy within ${INPUT_HEALTH_TIMEOUT}s (last state: ${state})"
+  echo "::error::${INPUT_WAIT_HEALTHY} never reported healthy within ${INPUT_HEALTH_TIMEOUT}s (last state: ${state})" >&2
+  return 1
 }
 
 # ── The verification, from HERE rather than from the host ────────────────────
@@ -190,7 +200,47 @@ verify() {
     fi
     sleep "$INPUT_VERIFY_INTERVAL"
   done
-  fail "${INPUT_VERIFY_URL} did not serve what was deployed within ${INPUT_VERIFY_TIMEOUT}s (last status: ${status:-no answer}). The deploy reached the host, so what failed is the host serving it: read the container's logs."
+  echo "::error::${INPUT_VERIFY_URL} did not serve what was deployed within ${INPUT_VERIFY_TIMEOUT}s (last status: ${status:-no answer}). The deploy reached the host, so what failed is the host serving it: read the container's logs." >&2
+  return 1
+}
+
+# Put back what was running, and prove THAT serves. A rollback nobody verified
+# is a second unverified deploy on top of a failed one.
+roll_back() {
+  local previous="$1"
+  if [[ -z "$previous" ]]; then
+    echo "::warning::nothing to roll back to: no digest was running before this deploy"
+    return 1
+  fi
+  case "$INPUT_IMAGE" in
+    "")
+      echo "::warning::rollback needs an image reference to move back, and none was given"
+      return 1 ;;
+    *@sha256:*)
+      echo "::warning::image was given as a digest, so there is no tag to move back; pin the previous digest in your compose file instead"
+      return 1 ;;
+  esac
+  echo "→ rolling back to ${previous}"
+  if ! remote "docker pull -q $(printf '%q' "$previous")"; then
+    echo "::error::the rollback could not pull ${previous}; the host is still serving the failed deploy"
+    return 1
+  fi
+  # The compose file names a REFERENCE, and what a deploy changed is which bytes
+  # that reference resolves to. So the rollback moves the local tag back to the
+  # previous digest and recreates, which needs no convention in the compose file
+  # and no file on the host edited by CI.
+  if ! remote "docker tag $(printf '%q' "$previous") $(printf '%q' "$INPUT_IMAGE")"; then
+    echo "::error::the rollback could not point ${INPUT_IMAGE} back at ${previous}; the host is still serving the failed deploy"
+    return 1
+  fi
+  local compose service=""
+  compose="docker compose -f $(printf '%q' "$INPUT_COMPOSE_FILE")"
+  [[ -n "$INPUT_SERVICE" ]] && service="$(printf '%q' "$INPUT_SERVICE")"
+  if ! remote "${compose} up -d --force-recreate --remove-orphans ${service}"; then
+    echo "::error::the rollback could not start ${previous}; the host is still serving the failed deploy"
+    return 1
+  fi
+  return 0
 }
 
 main() {
@@ -208,11 +258,46 @@ main() {
 
   prepare_ssh
   [[ -z "$INPUT_REMOTE_COMMAND" ]] && check_connection
+
+  local before=""
+  if [[ "${INPUT_ROLLBACK,,}" == "true" ]]; then
+    before="$(previous_digest)"
+    [[ -n "$before" ]] && echo "→ ${before} is running now, and is what a failed verification returns to"
+  fi
+
   deploy
   record_digest
-  wait_healthy
-  verify
-  echo "→ deployed and verified"
+  local rolled=false
+
+  # A failure from here on is a deploy that landed and does not serve, which is
+  # exactly the case rollback exists for. The original failure is reported
+  # first, and reported whatever the rollback does — a rollback must never turn
+  # a red run green.
+  if wait_healthy && verify; then
+    echo "rolled-back=false" >> "${GITHUB_OUTPUT:-/dev/null}"
+    echo "→ deployed and verified"
+    return 0
+  fi
+
+  if [[ "${INPUT_ROLLBACK,,}" != "true" ]]; then
+    fail "the deploy landed and ${INPUT_HOST} does not serve it. The host is still running it, so its logs are there to read; set rollback: true to have the previous digest put back instead."
+  fi
+
+  if roll_back "$before"; then
+    rolled=true
+    if [[ -n "$INPUT_VERIFY_URL" ]]; then
+      local deadline=$(( SECONDS + 60 ))
+      while (( SECONDS < deadline )); do
+        if curl -sS -m 15 "$INPUT_VERIFY_URL" > /dev/null 2>&1; then
+          echo "→ rolled back to ${before}, and ${INPUT_VERIFY_URL} answers again"
+          break
+        fi
+        sleep "$INPUT_VERIFY_INTERVAL"
+      done
+    fi
+  fi
+  echo "rolled-back=${rolled}" >> "${GITHUB_OUTPUT:-/dev/null}"
+  fail "the deploy landed and ${INPUT_HOST} does not serve it. See the errors above for what the rollback did."
 }
 
 main "$@"

@@ -6,6 +6,14 @@ and the versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- `rollback`, off by default: a failed verification puts the previous digest back
+  and checks the host answers again, and the workflow still fails — a rollback
+  that turned a red run green would be the worst of both. It moves the local tag
+  back rather than requiring a convention in your compose file, and it says
+  plainly when it cannot help: an image given as a digest has no tag to move, and
+  a first deploy has nothing to return to. CI drives it against a local registry
+  with two different images behind one moving reference, and asserts the host
+  serves the first one again.
 - A connection probe on the compose path that names which failure it was: a
   changed host key, a refused key, nothing answering, a refused port, a name
   that does not resolve, or a user who got in and cannot talk to docker. Five
