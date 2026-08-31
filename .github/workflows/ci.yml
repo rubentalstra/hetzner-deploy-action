@@ -1,0 +1,162 @@
+# The action is shell, so it is linted like shell and PROVEN by deploying
+# something. The integration job deploys to the runner itself over real SSH,
+# because an action nobody has watched succeed is an action nobody should use.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: shell and workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: shellcheck
+        run: shellcheck deploy.sh
+      - name: actionlint
+        run: |
+          docker run --rm -v "$PWD:/repo" --workdir /repo \
+            rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 \
+            -color
+
+  deploy:
+    name: it actually deploys and verifies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A real SSH host: this runner. The action does not know or care that the
+      # host it deploys to is the machine it runs on.
+      - name: Stand up an SSH host with docker
+        id: host
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq openssh-server >/dev/null
+          sudo systemctl start ssh
+          ssh-keygen -t ed25519 -f "$RUNNER_TEMP/key" -N "" -C ci@test
+          mkdir -p ~/.ssh
+          cat "$RUNNER_TEMP/key.pub" >> ~/.ssh/authorized_keys
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/authorized_keys
+          {
+            echo 'key<<KEY_EOF'
+            cat "$RUNNER_TEMP/key"
+            echo 'KEY_EOF'
+            echo 'known<<KNOWN_EOF'
+            ssh-keyscan -p 22 127.0.0.1
+            echo 'KNOWN_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Lay out the fixture the action will deploy
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/fixture
+          printf 'fixture version 1.0.0\n' > /opt/fixture/index.html
+          cp tests/docker-compose.yml /opt/fixture/docker-compose.yml
+          echo 'FIXTURE_IMAGE=nginx:1.29-alpine' > /opt/fixture/.env
+        shell: bash
+
+      # The whole point: it deploys, waits for the container's own healthcheck,
+      # and then proves from OUTSIDE that the served bytes carry the version.
+      - name: Deploy and verify
+        id: deployed
+        uses: ./
+        with:
+          host: 127.0.0.1
+          user: runner
+          ssh-key: ${{ steps.host.outputs.key }}
+          known-hosts: ${{ steps.host.outputs.known }}
+          image: nginx:1.29-alpine
+          compose-file: /opt/fixture/docker-compose.yml
+          service: fixture
+          wait-healthy: fixture
+          verify-url: http://127.0.0.1:18080/
+          verify-contains: "version 1.0.0"
+          verify-timeout: "120"
+
+      - name: The outputs say what ran
+        env:
+          DIGEST: ${{ steps.deployed.outputs.digest }}
+          VERIFIED: ${{ steps.deployed.outputs.verified }}
+        run: |
+          set -euo pipefail
+          [ "$VERIFIED" = "true" ] || { echo "::error::the action reported verified=$VERIFIED"; exit 1; }
+          case "$DIGEST" in
+            *@sha256:*) echo "ran $DIGEST" ;;
+            *) echo "::error::no digest was recorded ($DIGEST)"; exit 1 ;;
+          esac
+
+      # A gate is proven by REFUSING. Each of these must fail the action, and
+      # the job fails if any of them passes.
+      - name: A verification that cannot pass is refused
+        env:
+          KEY: ${{ steps.host.outputs.key }}
+          KNOWN: ${{ steps.host.outputs.known }}
+        run: |
+          set -euo pipefail
+          run_action() {
+            env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+                INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$1" INPUT_INSECURE="${2:-false}" \
+                INPUT_IMAGE=nginx:1.29-alpine \
+                INPUT_COMPOSE_FILE=/opt/fixture/docker-compose.yml INPUT_SERVICE=fixture \
+                INPUT_REMOTE_COMMAND="" INPUT_WAIT_HEALTHY="" INPUT_HEALTH_TIMEOUT=30 \
+                INPUT_VERIFY_URL="$3" INPUT_VERIFY_CONTAINS="$4" \
+                INPUT_VERIFY_TIMEOUT=15 INPUT_VERIFY_INTERVAL=3 \
+                ./deploy.sh
+          }
+
+          echo "── a version the host does not serve must fail"
+          if run_action "$KNOWN" false http://127.0.0.1:18080/ "version 9.9.9"; then
+            echo "::error::the action passed while the host served the old version"; exit 1
+          fi
+
+          echo "── a verify-url with no verify-contains must fail"
+          if run_action "$KNOWN" false http://127.0.0.1:18080/ ""; then
+            echo "::error::the action accepted a bare 200 as proof"; exit 1
+          fi
+
+          echo "── an unpinned host key must fail"
+          if run_action "" false http://127.0.0.1:18080/ "version 1.0.0"; then
+            echo "::error::the action connected without a pinned host key"; exit 1
+          fi
+
+          echo "all three refusals held"
+
+  conclusion:
+    name: conclusion
+    needs: [lint, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every needed job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          echo "$RESULTS" | grep -q '"result": *"failure"' && { echo "::error::a job failed"; exit 1; }
+          echo "$RESULTS" | grep -q '"result": *"cancelled"' && { echo "::error::a job was cancelled"; exit 1; }
+          echo "ok"

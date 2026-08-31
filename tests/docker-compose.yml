@@ -1,0 +1,17 @@
+# The fixture the integration test deploys: something that serves a version
+# string and has a healthcheck, which is exactly the shape the action is for.
+services:
+  fixture:
+    image: ${FIXTURE_IMAGE}
+    container_name: fixture
+    ports:
+      - "18080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost/ || exit 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
+    restart: unless-stopped

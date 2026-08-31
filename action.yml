@@ -1,0 +1,125 @@
+name: Hetzner deploy and verify
+description: >-
+  Deploy a container image to a host you already own, over SSH, and refuse to
+  go green until that host actually serves what you deployed.
+author: Ruben Talstra
+branding:
+  icon: upload-cloud
+  color: red
+
+inputs:
+  host:
+    description: The hostname or address to deploy to.
+    required: true
+  user:
+    description: The SSH user. Give it the narrowest account that can run the deploy.
+    required: false
+    default: deploy
+  port:
+    description: The SSH port.
+    required: false
+    default: "22"
+  ssh-key:
+    description: >-
+      The private key, from a secret. It is written to a file only this step can
+      read and removed when the step ends, and it is never printed.
+    required: true
+  known-hosts:
+    description: >-
+      The host's public key, as one or more `ssh-keyscan` lines. REQUIRED unless
+      `insecure-accept-any-host-key` is true: without it the first connection
+      trusts whatever answers, which is the hole every "StrictHostKeyChecking=no"
+      deploy leaves open.
+    required: false
+    default: ""
+  insecure-accept-any-host-key:
+    description: >-
+      Skip host key verification. Says what it is on purpose. Only reach for it
+      on a host you are about to replace anyway.
+    required: false
+    default: "false"
+  image:
+    description: >-
+      The image to deploy, by tag or by digest. Given a tag, the digest it
+      resolved to is recorded in the output and in the log, so the run says what
+      actually landed.
+    required: false
+    default: ""
+  compose-file:
+    description: >-
+      A docker compose file ON THE HOST. When set, the deploy is `pull` then
+      `up -d` against it.
+    required: false
+    default: ""
+  service:
+    description: The compose service to restart. Empty means every service in the file.
+    required: false
+    default: ""
+  remote-command:
+    description: >-
+      A command to run on the host instead of the compose path. The two are
+      mutually exclusive, and one of them is required.
+    required: false
+    default: ""
+  verify-url:
+    description: >-
+      A URL fetched FROM THE RUNNER after the deploy, so what is proved is the
+      public path rather than something only the host can see.
+    required: false
+    default: ""
+  verify-contains:
+    description: >-
+      Text the response must contain — normally the version you just deployed.
+      A bare 200 is not proof: the deployment you replaced answers 200 too.
+    required: false
+    default: ""
+  verify-timeout:
+    description: How long to wait for the expected response, in seconds.
+    required: false
+    default: "300"
+  verify-interval:
+    description: How long to wait between attempts, in seconds.
+    required: false
+    default: "5"
+  wait-healthy:
+    description: >-
+      A container name to wait on until Docker reports it healthy, before the
+      URL is fetched. Needs a HEALTHCHECK in the image.
+    required: false
+    default: ""
+  health-timeout:
+    description: How long to wait for that container to report healthy, in seconds.
+    required: false
+    default: "120"
+
+outputs:
+  digest:
+    description: The image digest that is running on the host after the deploy.
+    value: ${{ steps.deploy.outputs.digest }}
+  verified:
+    description: Whether the verification ran and passed.
+    value: ${{ steps.deploy.outputs.verified }}
+
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      shell: bash
+      env:
+        INPUT_HOST: ${{ inputs.host }}
+        INPUT_USER: ${{ inputs.user }}
+        INPUT_PORT: ${{ inputs.port }}
+        INPUT_SSH_KEY: ${{ inputs.ssh-key }}
+        INPUT_KNOWN_HOSTS: ${{ inputs.known-hosts }}
+        INPUT_INSECURE: ${{ inputs.insecure-accept-any-host-key }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_COMPOSE_FILE: ${{ inputs.compose-file }}
+        INPUT_SERVICE: ${{ inputs.service }}
+        INPUT_REMOTE_COMMAND: ${{ inputs.remote-command }}
+        INPUT_VERIFY_URL: ${{ inputs.verify-url }}
+        INPUT_VERIFY_CONTAINS: ${{ inputs.verify-contains }}
+        INPUT_VERIFY_TIMEOUT: ${{ inputs.verify-timeout }}
+        INPUT_VERIFY_INTERVAL: ${{ inputs.verify-interval }}
+        INPUT_WAIT_HEALTHY: ${{ inputs.wait-healthy }}
+        INPUT_HEALTH_TIMEOUT: ${{ inputs.health-timeout }}
+      run: ${GITHUB_ACTION_PATH}/deploy.sh
