@@ -158,9 +158,12 @@ jobs:
           needle="$(printf '%s\n' "$KEY" | sed -n '3p')"
           [ -n "$needle" ] || { echo "::error::could not take a sample line from the key"; exit 1; }
 
+          # GITHUB_ACTIONS is cleared on purpose: with no runner listening,
+          # the script must register nothing, so anything matching here is a
+          # genuine leak rather than a mask command nobody consumed.
           captured="$RUNNER_TEMP/captured.log"
           set +e
-          env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+          env GITHUB_ACTIONS= INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
               INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$KNOWN" INPUT_INSECURE=false \
               INPUT_IMAGE=nginx:1.29-alpine \
               INPUT_COMPOSE_FILE=/opt/fixture/docker-compose.yml INPUT_SERVICE=fixture \
@@ -181,7 +184,25 @@ jobs:
             find "${RUNNER_TEMP}" -maxdepth 1 -name 'hetzner-deploy-*' -ls
             exit 1
           fi
-          echo "no key material in the output, and no key directory left behind"
+          # And under a runner, the only lines carrying key material may be the
+          # registration itself — which the runner consumes and never prints.
+          masked="$RUNNER_TEMP/masked.log"
+          set +e
+          env INPUT_HOST=127.0.0.1 INPUT_USER=runner INPUT_PORT=22 \
+              INPUT_SSH_KEY="$KEY" INPUT_KNOWN_HOSTS="$KNOWN" INPUT_INSECURE=false \
+              INPUT_IMAGE=nginx:1.29-alpine \
+              INPUT_COMPOSE_FILE=/opt/fixture/docker-compose.yml INPUT_SERVICE=fixture \
+              INPUT_REMOTE_COMMAND="" INPUT_WAIT_HEALTHY=fixture INPUT_HEALTH_TIMEOUT=30 \
+              INPUT_VERIFY_URL=http://127.0.0.1:18080/ INPUT_VERIFY_CONTAINS="version 9.9.9" \
+              INPUT_VERIFY_TIMEOUT=10 INPUT_VERIFY_INTERVAL=3 \
+              GITHUB_OUTPUT=/dev/null \
+              ./deploy.sh > "$masked" 2>&1
+          set -e
+          if grep -F -- "$needle" "$masked" | grep -qv '^::add-mask::'; then
+            echo "::error::key material appeared outside the mask registration"
+            exit 1
+          fi
+          echo "no key material in the output, none outside the mask registration, and no key directory left behind"
 
   conclusion:
     name: conclusion

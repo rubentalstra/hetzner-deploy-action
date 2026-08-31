@@ -36,9 +36,16 @@ prepare_ssh() {
   # A secret is redacted only if the runner was told about it. The key usually
   # arrives from `secrets.*` and is masked already; it does not have to, so it
   # is registered here, line by line, because the runner masks exact strings.
-  while IFS= read -r line; do
-    [[ -n "$line" ]] && echo "::add-mask::$line"
-  done <<< "$INPUT_SSH_KEY"
+  #
+  # ONLY under a runner. `::add-mask::<value>` is the value in the clear until
+  # something consumes the line, so emitting it with nothing listening — a local
+  # run, or a step whose stdout is redirected — writes the key to wherever that
+  # output goes. CI asserts both halves of this.
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && echo "::add-mask::$line"
+    done <<< "$INPUT_SSH_KEY"
+  fi
 
   mkdir -p "$SSH_DIR"
   chmod 700 "$SSH_DIR"
